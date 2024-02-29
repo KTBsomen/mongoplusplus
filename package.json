@@ -1,0 +1,41 @@
+{
+  "name": "mongoplusplus",
+  "version": "1.0.2",
+  "description": "load balancing of read and write operations across multiple MongoDB servers ",
+  "main": "mongoplus.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "somen das(somen6562@gmail.com)",
+  "keywords": [
+    "MongoDB",
+    "Database",
+    "ORM",
+    "Wrapper",
+    "Mongoose",
+    "Multi-Database",
+    "Data Management",
+    "Async Operations",
+    "Scalable",
+    "Readability",
+    "Performance",
+    "Node.js",
+    "Worker Threads",
+    "Connection Pooling",
+    "Schema Management",
+    "CRUD Operations",
+    "Document-Oriented",
+    "Distributed",
+    "Replication",
+    "Sharding",
+    "load balancing",
+    "multiple database",
+    "Aggregation Framework"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "mongoose": "^6.3.5",
+    "mongoose-sequence": "^5.3.1",
+    "mongoplusplus": "^1.0.1"
+  }
+}
