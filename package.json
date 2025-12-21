@@ -1,10 +1,15 @@
 {
   "name": "mongoplusplus",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "load balancing of read and write operations across multiple MongoDB servers ",
   "main": "mongoplus.js",
+  "types": "index.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KTBsomen/mongoplusplus.git"
   },
   "author": "somen das(somen6562@gmail.com)",
   "keywords": [
@@ -30,12 +35,20 @@
     "Sharding",
     "load balancing",
     "multiple database",
-    "Aggregation Framework"
+    "Aggregation Framework",
+    "Indexing",
+    "Transactions",
+    "Database Orchestration",
+    "High Availability",
+    "Distributed database"
   ],
   "license": "ISC",
   "dependencies": {
-    "mongoose": "^6.3.5",
-    "mongoose-sequence": "^5.3.1",
-    "mongoplusplus": "^1.0.1"
+    "mongoose": "^6.13.8",
+    "mongoose-sequence": "^5.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
   }
 }

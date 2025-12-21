@@ -186,6 +186,162 @@ class MongoModel {
     }
     //==================
 
+    async bulkWrite(data, options = {}) {
+        // Default options
+        const {
+            batchSize = 1000,  // Process 1000 items per batch by default
+            concurrentBatches = true  // Run batches concurrently or sequentially
+        } = options;
+
+        if (!data || data.length === 0) return [];
+
+        // 1. Identify writable models
+        const writableModels = this.model.filter(m => !Mongoplus.readonlymodels.includes(m));
+        const numDBs = writableModels.length;
+
+        if (numDBs === 0) {
+            throw new Error("No writable databases available.");
+        }
+
+        // Split data into batches
+        const batches = [];
+        for (let i = 0; i < data.length; i += batchSize) {
+            batches.push(data.slice(i, i + batchSize));
+        }
+
+        console.log(`[Mongoplus] Processing ${data.length} items in ${batches.length} batch(es) of max ${batchSize} items`);
+
+        const finalRetryArray = [];
+        const allResults = [];
+
+        // Process function for a single batch
+        const processBatch = async (batchData, batchNumber) => {
+            // 2. Internal Bucket Distribution & Op Transformation
+            const buckets = Array.from({ length: numDBs }, () => []);
+
+            batchData.forEach((item, index) => {
+                const bucketIndex = index % numDBs;
+                const writableModel = writableModels[bucketIndex];
+
+                // Find the actual dbIndex in the full model array
+                const dbIdx = this.model.indexOf(writableModel);
+
+                // Clone to avoid mutating original data
+                const itemCopy = { ...item, dbIndex: dbIdx };
+
+                // Build filter for updateOne - require _id or explicit id field
+                let filter;
+                if (itemCopy._id) {
+                    filter = { _id: itemCopy._id };
+                } else if (itemCopy.id) {
+                    filter = { _id: itemCopy.id };
+                    itemCopy._id = itemCopy.id; // Normalize to _id
+                } else {
+                    // For new documents without ID, generate one
+                    const mongoose = require('mongoose');
+                    itemCopy._id = new mongoose.Types.ObjectId();
+                    filter = { _id: itemCopy._id };
+                }
+
+                buckets[bucketIndex].push({
+                    updateOne: {
+                        filter: filter,
+                        update: { $set: itemCopy },
+                        upsert: true
+                    }
+                });
+            });
+
+            // 3. Transaction Runner with Retry Logic
+            const runTransactionWithRetry = async (model, ops, modelIndex) => {
+                let session;
+                try {
+                    session = await model.db.startSession();
+                } catch (sessionError) {
+                    throw new Error(`[Mongoplus] Database ${modelIndex} is a standalone instance. Transactions (required for bulkWriteZipper) only work on Replica Sets. \nError: ${JSON.stringify(sessionError)}`);
+
+
+                }
+                const attemptWrite = async () => {
+                    let result;
+                    await session.withTransaction(async () => {
+                        result = await model.bulkWrite(ops, { session, ordered: false });
+                    });
+                    return result;
+                };
+
+                try {
+                    // First Attempt
+                    return await attemptWrite();
+                } catch (firstError) {
+                    console.warn(`[Mongoplus] Batch ${batchNumber} failed for ${model.modelName} (DB ${modelIndex}). Retrying once...`);
+                    try {
+                        // Second Attempt (Retry)
+                        return await attemptWrite();
+                    } catch (retryError) {
+                        // Fail: Store in retry array for the final error report
+                        finalRetryArray.push({
+                            batch: batchNumber,
+                            model: model.modelName,
+                            dbIndex: modelIndex,
+                            opsCount: ops.length,
+                            data: ops.map(o => o.updateOne.update.$set),
+                            error: retryError.message
+                        });
+                        throw retryError;
+                    }
+                } finally {
+                    await session.endSession();
+                }
+            };
+
+            // 4. Execute all "Zips" concurrently for this batch
+            const results = await Promise.all(
+                buckets.map((ops, i) => {
+                    if (ops.length === 0) return Promise.resolve(null);
+                    const dbIdx = this.model.indexOf(writableModels[i]);
+                    return runTransactionWithRetry(writableModels[i], ops, dbIdx);
+                })
+            );
+
+            return results.filter(r => r !== null);
+        };
+
+        // Process all batches
+        try {
+            if (concurrentBatches && batches.length > 1) {
+                // Run all batches concurrently (faster but more resource intensive)
+                console.log(`[Mongoplus] Running ${batches.length} batches concurrently`);
+                const batchResults = await Promise.all(
+                    batches.map((batch, idx) => processBatch(batch, idx + 1))
+                );
+                allResults.push(...batchResults.flat());
+            } else {
+                // Run batches sequentially (slower but safer for large datasets)
+                console.log(`[Mongoplus] Running ${batches.length} batches sequentially`);
+                for (let i = 0; i < batches.length; i++) {
+                    const result = await processBatch(batches[i], i + 1);
+                    allResults.push(...result);
+                    console.log(`[Mongoplus] Completed batch ${i + 1}/${batches.length}`);
+                }
+            }
+
+            // Update global rotation index for write() method consistency
+            MongoModel.currentIndex = (MongoModel.currentIndex + data.length) % this.model.length;
+
+            console.log(`[Mongoplus] Successfully processed ${data.length} items across ${numDBs} databases`);
+            return allResults;
+
+        } catch (error) {
+            // Throw a comprehensive error containing the retry array
+            const exception = new Error(`Zipper Bulk Write failed after retries: ${error.message}`);
+            exception.failedBatches = finalRetryArray;
+            exception.originalError = error;
+            throw exception;
+        }
+    }
+    //===================
+
     async findOne(dbIndex, filter, chain = {}) {
         var currentModel = this.model[dbIndex]
 

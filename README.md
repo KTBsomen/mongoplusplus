@@ -111,6 +111,24 @@ Returns: The written document.
 ```
 
 ```node 
+bulkWrite(data)
+Usage: Bulk writes data to a MongoDB database with transaction inbuilt.
+
+ const testData = Array.from({ length: 10000 }, (_, i) => ({
+        name: `User ${i}`,
+        email: `user${i}@example.com`,
+        age: 20 + (i % 50)
+    }));
+
+    // Test 1: Large batch, concurrent
+    console.time('Large batch concurrent');
+    await UserModel.bulkWrite(testData, {
+        batchSize: 5000,
+        concurrentBatches: true
+    });
+```
+
+```node 
 findOne(dbIndex, filter, chain = {})
 Usage: Finds a single document matching the filter in a specific MongoDB database.
 const document = await likes.findOne(0, { name: 'John' }, { limit: 1 });
