@@ -1,25 +1,31 @@
 const mongoose = require('mongoose');
 
 const { performance } = require('perf_hooks');
+
 class Mongoplus {
     constructor(mongoURI) {
-
         this.mongoURI = mongoURI;
         this.allConnections = [];
         this.currentIndex = 0;
         if (this.mongoURI.filter((uri) => uri.startsWith("readonly")).length == this.mongoURI.length) {
             throw new Error('Some of your URIs must be writable. If it is a mistake remove the `readonly:` flag from your urls')
         }
-
     }
+
     static readonlydbs = []
-    static readonlymodels = [] // Define currentIndex to keep track of the current URI
+    static readonlymodels = []
+
     Schema(schema) {
         return mongoose.Schema(schema)
     }
+
     addIndex(schema, indextype) {
-        return schema.index(indextype)
+        // MongoDB 4.2+ no longer supports 'background' option, removing it if present
+        const cleanIndexType = { ...indextype };
+        delete cleanIndexType.background;
+        return schema.index(cleanIndexType)
     }
+
     getNextMongoURI() {
         const uri = this.mongoURI[this.currentIndex];
         this.currentIndex = (this.currentIndex + 1) % this.mongoURI.length;
@@ -28,16 +34,18 @@ class Mongoplus {
 
     connectToAll() {
         for (let i = 0; i < this.mongoURI.length; i++) {
-
             const uri = this.mongoURI[i].replaceAll("readonly:", '');
-            const con = mongoose.createConnection(uri, {
+
+            // Update deprecated SSL options for MongoDB Node Driver 6+
+            const connectionOptions = {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
-            });
+            };
+
+            const con = mongoose.createConnection(uri, connectionOptions);
 
             this.allConnections.push(con);
             if (this.mongoURI[i].startsWith('readonly:')) {
-
                 Mongoplus.readonlydbs.push(con)
             }
         }
@@ -58,14 +66,13 @@ class Mongoplus {
         }
         const allConnections = this.allConnections;
         const model = [];
-        //console.groupCollapsed("====>",Mongoplus.readonlydbs);
+
         for (let i = 0; i < allConnections.length; i++) {
             const mongooseConnection = allConnections[i];
             var currentm = mongooseConnection.model(name, schema)
             model.push(currentm);
-            //console.count(Mongoplus.readonlydbs[i]);
-            if (Mongoplus.readonlydbs.includes(allConnections[i])) {
 
+            if (Mongoplus.readonlydbs.includes(allConnections[i])) {
                 Mongoplus.readonlymodels.push(currentm)
             }
         }
@@ -82,11 +89,9 @@ class MongoModel {
         this.model = model;
         this.readonlydbs = readonlydbs
         this.s = s
-
-
     }
+
     static currentIndex = 0
-    //===================
 
     async findInAllDatabase(filter, chain = {}) {
         const dynamicComputationPromises = [];
@@ -95,6 +100,7 @@ class MongoModel {
         });
         return await this.runLargeComputations(dynamicComputationPromises);
     }
+
     async aggregateInAllDatabase(filter, chain = {}) {
         const dynamicComputationPromises = [];
         this.model.forEach((modelRef) => {
@@ -102,10 +108,9 @@ class MongoModel {
         });
         return await this.runLargeComputations(dynamicComputationPromises);
     }
-    //==================
+
     async writeInAllDatabase(data) {
         data["dbIndex"] = -1
-        const dynamicComputationPromises = [];
         const promises = [];
         for (let i = 0; i < this.model.length; i++) {
             if (Mongoplus.readonlymodels.includes(this.model[i])) continue;
@@ -115,50 +120,41 @@ class MongoModel {
         }
 
         return Promise.all(promises);
-
     }
-    //==================
-    async UpdateOneInAllDatabase(filter, update) {
 
+    async UpdateOneInAllDatabase(filter, update) {
         const dynamicComputationPromises = [];
         this.model.forEach((modelRef) => {
-
             dynamicComputationPromises.push({ fn: modelRef.findOneAndUpdate.bind(modelRef), params: [filter, update, { new: true }], chain: {} });
         });
         return await this.runLargeComputations(dynamicComputationPromises);
-
     }
-    //==================
-    async UpdateByIdInAllDatabase(id, update) {
 
+    async UpdateByIdInAllDatabase(id, update) {
         const dynamicComputationPromises = [];
         this.model.forEach((modelRef) => {
-
             dynamicComputationPromises.push({ fn: modelRef.findByIdAndUpdate.bind(modelRef), params: [id, update, { new: true }], chain: {} });
         });
         return await this.runLargeComputations(dynamicComputationPromises);
-
     }
-    async findByIdInAllDatabaseAndDelete(id) {
 
+    async findByIdInAllDatabaseAndDelete(id) {
         const dynamicComputationPromises = [];
         this.model.forEach((modelRef) => {
-
+            // Changed from findByIdAndRemove to findByIdAndDelete (Mongoose 8 removed findByIdAndRemove)
             dynamicComputationPromises.push({ fn: modelRef.findByIdAndDelete.bind(modelRef), params: [id], chain: {} });
         });
         return await this.runLargeComputations(dynamicComputationPromises);
-
     }
-    async findOneInAllDatabaseAndDelete(filter) {
 
+    async findOneInAllDatabaseAndDelete(filter) {
         const dynamicComputationPromises = [];
         this.model.forEach((modelRef) => {
-
             dynamicComputationPromises.push({ fn: modelRef.findOneAndDelete.bind(modelRef), params: [filter], chain: {} });
         });
         return await this.runLargeComputations(dynamicComputationPromises);
-
     }
+
     /**
      * Delete many documents matching `filter` in all databases and return aggregated results.
      */
@@ -169,34 +165,29 @@ class MongoModel {
         });
         return await this.runLargeComputations(dynamicComputationPromises);
     }
-    //=======================
+
     async write(data) {
-
-
         const currentModel = this.model[MongoModel.currentIndex];
         data["dbIndex"] = MongoModel.currentIndex;
         MongoModel.currentIndex = (MongoModel.currentIndex + 1) % this.model.length;
+
         if (Mongoplus.readonlymodels.includes(currentModel)) {
             return await this.write(data);
         }
 
-
         try {
-
             let dataToWrite = new currentModel(data)
             return await dataToWrite.save()
         } catch (error) {
             throw error
         }
-
     }
-    //==================
 
     async bulkWrite(data, options = {}) {
         // Default options
         const {
-            batchSize = 1000,  // Process 1000 items per batch by default
-            concurrentBatches = true  // Run batches concurrently or sequentially
+            batchSize = 1000,
+            concurrentBatches = true
         } = options;
 
         if (!data || data.length === 0) return [];
@@ -241,9 +232,9 @@ class MongoModel {
                     filter = { _id: itemCopy._id };
                 } else if (itemCopy.id) {
                     filter = { _id: itemCopy.id };
-                    itemCopy._id = itemCopy.id; // Normalize to _id
+                    itemCopy._id = itemCopy.id;
                 } else {
-                    // For new documents without ID, generate one
+                    // Mongoose 9: use 'new' keyword with ObjectId (required since Mongoose 7)
                     itemCopy._id = new mongoose.Types.ObjectId();
                     filter = { _id: itemCopy._id };
                 }
@@ -264,9 +255,8 @@ class MongoModel {
                     session = await model.db.startSession();
                 } catch (sessionError) {
                     throw new Error(`[Mongoplus] Database ${modelIndex} is a standalone instance. Transactions (required for bulkWriteZipper) only work on Replica Sets. \nError: ${JSON.stringify(sessionError)}`);
-
-
                 }
+
                 const attemptWrite = async () => {
                     let result;
                     await session.withTransaction(async () => {
@@ -315,14 +305,12 @@ class MongoModel {
         // Process all batches
         try {
             if (concurrentBatches && batches.length > 1) {
-                // Run all batches concurrently (faster but more resource intensive)
                 console.log(`[Mongoplus] Running ${batches.length} batches concurrently`);
                 const batchResults = await Promise.all(
                     batches.map((batch, idx) => processBatch(batch, idx + 1))
                 );
                 allResults.push(...batchResults.flat());
             } else {
-                // Run batches sequentially (slower but safer for large datasets)
                 console.log(`[Mongoplus] Running ${batches.length} batches sequentially`);
                 for (let i = 0; i < batches.length; i++) {
                     const result = await processBatch(batches[i], i + 1);
@@ -345,7 +333,6 @@ class MongoModel {
             throw exception;
         }
     }
-    //===================
 
     async findOne(dbIndex, filter, chain = {}) {
         var currentModel = this.model[dbIndex]
@@ -358,17 +345,12 @@ class MongoModel {
         else if (chain.skip) {
             return currentModel.findOne(filter).skip(chain.skip)
         }
-
         else if (chain.limit) {
             return currentModel.findOne(filter).limit(chain.limit)
         } else {
             return currentModel.findOne(filter);
         }
-
-
     }
-
-    //===============
 
     async find(dbIndex, filter, chain = {}) {
         var currentModel = this.model[dbIndex]
@@ -383,11 +365,8 @@ class MongoModel {
         }
 
         return query;
-
-
-
     }
-    //=======================
+
     async findById(dbIndex, filter, chain = {}) {
         const currentModel = this.model[dbIndex];
 
@@ -404,36 +383,30 @@ class MongoModel {
         return query;
     }
 
-
-    //====================
     async findByIdAndUpdate(dbIndex, id, update) {
         var currentModel = this.model[dbIndex]
         return currentModel.findByIdAndUpdate(id, update, { new: true });
     }
-    //===============
-    async findByIdAndDelete(dbIndex, id, update) {
+
+    async findByIdAndDelete(dbIndex, id) {
         var currentModel = this.model[dbIndex]
-        return currentModel.findByIdAndRemove(id, update, { new: true });
+        // Changed from findByIdAndRemove to findByIdAndDelete (Mongoose 8 removed findByIdAndRemove)
+        return currentModel.findByIdAndDelete(id, { new: true });
     }
-    //===========
+
     async findOneAndUpdate(dbIndex, filter, update) {
         var currentModel = this.model[dbIndex]
         return currentModel.findOneAndUpdate(filter, update, { new: true });
     }
-    //=============
+
     async aggregate(dbIndex, filter, update) {
         var currentModel = this.model[dbIndex]
         return currentModel.aggregate(filter);
     }
-    //===========
+
     async watch(dbIndex) {
         return this.model[dbIndex].watch()
     }
-    //================
-
-
-
-
 
     getNextModel() {
         const currentModel = this.model[this.currentIndex];
@@ -441,6 +414,7 @@ class MongoModel {
         this.currentIndex = (this.currentIndex + 1) % this.model.length;
         return [currentModel, writen];
     }
+
     async runLargeComputations(computationPairs) {
         try {
             const startTime = performance.now();
@@ -450,7 +424,6 @@ class MongoModel {
                 computationPairs.map(async pair => {
                     var chain = pair.chain;
                     var query = pair.fn(...pair.params);
-                    // Start with the base query
 
                     // Dynamically apply chain options if they exist
                     for (const [key, value] of Object.entries(chain)) {
@@ -460,20 +433,16 @@ class MongoModel {
                     }
 
                     return query;
-
                 })
             );
 
             const endTime = performance.now();
             const totalTime = endTime - startTime;
 
-            // Process the results as needed
-            // const sum = results.reduce((acc, result) => acc + result, 0);
-
             return { results: [].concat(...results), totalTime };
         } catch (error) {
             console.error('Error:', error);
-            throw error; // Rethrow the error if needed
+            throw error;
         }
     }
 }
