@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+
+const { performance } = require('perf_hooks');
 class Mongoplus {
     constructor(mongoURI) {
 
@@ -104,19 +106,15 @@ class MongoModel {
     async writeInAllDatabase(data) {
         data["dbIndex"] = -1
         const dynamicComputationPromises = [];
-        modellist = this.model
-        //this.readonlydbs.forEach((i)=>{modellist.splice(i,1,null)})
-
+        const promises = [];
         for (let i = 0; i < this.model.length; i++) {
             if (Mongoplus.readonlymodels.includes(this.model[i])) continue;
-            var x = new this.model[i](data)
-
-            dynamicComputationPromises.push(await x.save());
-
-
+            const docData = Object.assign({}, data, { dbIndex: i });
+            const x = new this.model[i](docData);
+            promises.push(x.save());
         }
 
-        return [].concat(dynamicComputationPromises);
+        return Promise.all(promises);
 
     }
     //==================
@@ -161,6 +159,16 @@ class MongoModel {
         return await this.runLargeComputations(dynamicComputationPromises);
 
     }
+    /**
+     * Delete many documents matching `filter` in all databases and return aggregated results.
+     */
+    async findManyInAllDatabaseAndDelete(filter) {
+        const dynamicComputationPromises = [];
+        this.model.forEach((modelRef) => {
+            dynamicComputationPromises.push({ fn: modelRef.deleteMany.bind(modelRef), params: [filter], chain: {} });
+        });
+        return await this.runLargeComputations(dynamicComputationPromises);
+    }
     //=======================
     async write(data) {
 
@@ -169,9 +177,7 @@ class MongoModel {
         data["dbIndex"] = MongoModel.currentIndex;
         MongoModel.currentIndex = (MongoModel.currentIndex + 1) % this.model.length;
         if (Mongoplus.readonlymodels.includes(currentModel)) {
-            this.write(data)
-            //("This model is readonly");
-
+            return await this.write(data);
         }
 
 
@@ -238,7 +244,6 @@ class MongoModel {
                     itemCopy._id = itemCopy.id; // Normalize to _id
                 } else {
                     // For new documents without ID, generate one
-                    const mongoose = require('mongoose');
                     itemCopy._id = new mongoose.Types.ObjectId();
                     filter = { _id: itemCopy._id };
                 }
@@ -346,7 +351,7 @@ class MongoModel {
         var currentModel = this.model[dbIndex]
 
         if (chain.skip && chain.limit && chain.sort) {
-            currentModel.findOne(filter).skip(chain.skip).limit(chain.limit).sort(chain.sort)
+            return currentModel.findOne(filter).skip(chain.skip).limit(chain.limit).sort(chain.sort)
         } else if (chain.skip && chain.limit) {
             return currentModel.findOne(filter).skip(chain.skip).limit(chain.limit)
         }
@@ -473,4 +478,9 @@ class MongoModel {
     }
 }
 
+// Attach named export and default for interoperability
+Mongoplus.MongoModel = MongoModel;
 module.exports = Mongoplus;
+module.exports.default = Mongoplus;
+module.exports.MongoModel = MongoModel;
+exports.MongoModel = MongoModel;

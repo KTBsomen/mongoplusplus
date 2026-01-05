@@ -1,9 +1,10 @@
 {
   "name": "mongoplusplus",
-  "version": "1.0.5",
+  "version": "1.0.8",
   "description": "load balancing of read and write operations across multiple MongoDB servers ",
   "main": "mongoplus.js",
   "types": "index.d.ts",
+  "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -50,5 +51,13 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "require": "./mongoplus.js",
+      "default": "./mongoplus.js",
+      "types": "./index.d.ts"
+    },
+    "./package.json": "./package.json"
   }
 }

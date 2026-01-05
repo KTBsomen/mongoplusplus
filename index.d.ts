@@ -3,142 +3,224 @@ import mongoose = require('mongoose');
 /**
  * Mongoplus manages multiple mongoose connections and builds distributed models.
  *
- * Usage example:
- * ```js
- * const Mongoplus = require('mongoplus');
- * const mp = new Mongoplus(['mongodb://host1/db', 'readonly:mongodb://host2/db']);
+ * Example:
+ * ```ts
+ * import Mongoplus from 'mongoplusplus';
+ * const mp = new Mongoplus(['mongodb://a/db','readonly:mongodb://b/db']);
  * await mp.connectToAll();
- * const User = mp.buildModel('User', new mp.Schema({ name: String, dbIndex: { type: Number, required: true } }));
- * await User.write({ name: 'Alice' });
  * ```
  */
 declare class Mongoplus {
-    /** Array of connection URIs. Prefix a URI with `readonly:` to mark it read-only. */
+    /** Array of connection URIs. Use `readonly:` prefix to mark read-only URIs. */
     mongoURI: string[];
     /** All mongoose connections created by `connectToAll`. */
     allConnections: mongoose.Connection[];
-    /** Internal rotation index used by `getNextMongoURI`. */
+    /** Internal rotation index. */
     currentIndex: number;
-    /** Connections that were created from `readonly:` URIs. */
+    /** Connections created from `readonly:` URIs. */
     static readonlydbs: mongoose.Connection[];
     /** Models corresponding to readonly connections. */
     static readonlymodels: any[];
 
     /**
-     * Create a Mongoplus manager.
-     * @param mongoURI - Array of MongoDB URIs. Use `readonly:` prefix for read-only replicas.
+     * Create manager with list of URIs.
+     * @example
+     * const mp = new Mongoplus(['mongodb://a/db','readonly:mongodb://b/db']);
      */
     constructor(mongoURI: string[]);
 
-    /** Create a mongoose Schema from a plain definition. */
+    /**
+     * Create a mongoose Schema.
+     * @example
+     * const schema = mp.Schema({ name: String, dbIndex: { type: Number, required: true } });
+     */
     Schema(schema: mongoose.SchemaDefinition | mongoose.Schema): mongoose.Schema;
 
-    /** Add an index to a schema. Delegates to `schema.index(...)`. */
-    addIndex(schema: mongoose.Schema, indextype: any): any;
+    /**
+     * Add an index to a schema.
+     * @example
+     * mp.addIndex(schema, { email: 1 });
+     */
+    addIndex(schema: mongoose.Schema, indextype: any): void;
 
-    /** Return next MongoDB URI in rotation (without `readonly:` prefix). */
+    /**
+     * Return next MongoDB URI in rotation.
+     */
     getNextMongoURI(): string;
 
     /**
-     * Establish all connections from `mongoURI`. Returns an array of mongoose.Connection.
-     * Call this before `buildModel`.
+     * Establish all connections. Call before `buildModel`.
+     * @returns array of `mongoose.Connection`.
      */
     connectToAll(): mongoose.Connection[];
 
     /**
-     * Build a distributed model across all connections.
-     * The provided `schema` must include a required numeric `dbIndex` field.
+     * Build a distributed model across all connections. Schema must include `dbIndex`.
+     * @example
+     * const User = mp.buildModel('User', schema);
      */
     buildModel(name: string, schema: mongoose.Schema): MongoModel;
 }
 
 /**
- * MongoModel represents the model instances distributed across multiple databases.
- * Methods with `InAllDatabase` perform the operation on every connection and return aggregated results.
+ * MongoModel wraps per-connection models and exposes multi-DB helpers.
  */
 declare class MongoModel {
-    /** Array of mongoose models (one per connection). */
+    /** Per-connection mongoose Model instances. */
     model: any[];
     /** Read-only model references. */
     readonlydbs: any[];
-    /** Original schema used to create the models. */
+    /** Original schema. */
     s: mongoose.Schema;
-    /** Rotation index for `write` balancing. */
+    /** Rotation index for `write`. */
     static currentIndex: number;
 
     /**
-     * @param model - array of mongoose Model instances (one per connection)
-     * @param s - mongoose Schema used to create models
-     * @param readonlydbs - list of models that are read-only
+     * Construct a MongoModel.
+     * @example
+     * const mm = new MongoModel([M1,M2], schema, [M2]);
      */
     constructor(model: any[], s: mongoose.Schema, readonlydbs: any[]);
 
-    /** Find matching documents in all databases.
-     * @param filter - mongoose filter
-     * @param chain - optional chaining options (skip, limit, sort)
+    /**
+     * Run `find` on every DB and return aggregated results with timing.
+     * @example
+     * const { results, totalTime } = await User.findInAllDatabase({ active: true });
      */
     findInAllDatabase(filter: any, chain?: any): Promise<any>;
 
-    /** Run aggregation pipeline on all databases. */
+    /**
+     * Run aggregation pipeline on every DB and return aggregated results.
+     * @example
+     * await User.aggregateInAllDatabase([{ $match: { age: { $gt: 18 } } }]);
+     */
     aggregateInAllDatabase(filter: any, chain?: any): Promise<any>;
 
-    /** Write the same document to all writable databases. Returns an array of saved docs. */
+    /**
+     * Write the same document to all writable DBs. Returns saved docs array.
+     * @example
+     * await User.writeInAllDatabase({ name: 'Alice' });
+     */
     writeInAllDatabase(data: any): Promise<any[]>;
 
-    /** Update one matching document across all databases. */
+    /**
+     * Update one matching document across all DBs.
+     * @example
+     * await User.UpdateOneInAllDatabase({ active: false }, { active: true });
+     */
     UpdateOneInAllDatabase(filter: any, update: any): Promise<any>;
 
-    /** Update by id across all databases. */
+    /**
+     * Update by id across all DBs.
+     * @example
+     * await User.UpdateByIdInAllDatabase(id, { name: 'Bob' });
+     */
     UpdateByIdInAllDatabase(id: any, update: any): Promise<any>;
 
-    /** Find by id in all DBs and delete. */
+    /**
+     * Find by id in all DBs and delete.
+     * @example
+     * await User.findByIdInAllDatabaseAndDelete(id);
+     */
     findByIdInAllDatabaseAndDelete(id: any): Promise<any>;
 
-    /** Find one in all DBs and delete. */
+    /**
+     * Find one in all DBs and delete.
+     * @example
+     * await User.findOneInAllDatabaseAndDelete({ email: 'x@example.com' });
+     */
     findOneInAllDatabaseAndDelete(filter: any): Promise<any>;
 
-    /** Write a single document using round-robin balancing across writable DBs. */
+    /**
+     * Delete many documents matching `filter` in all databases and return aggregated results.
+     * @example
+     * await User.finManyInAllDatabaseAndDelete({ expired: true });
+     */
+    findManyInAllDatabaseAndDelete(filter: any): Promise<any>;
+
+    /**
+     * Write a single document using round-robin balancing across writable DBs.
+     * @example
+     * const saved = await User.write({ name: 'Charlie' });
+     */
     write(data: any): Promise<any>;
 
     /**
      * Perform efficient bulk upserts across writable DBs.
-     * @param data - array of objects to upsert
-     * @param options - optional settings: `batchSize` and `concurrentBatches`
+     * @example
+     * await User.bulkWrite([{ id: '1', name: 'A' }], { batchSize: 500 });
      */
     bulkWrite(data: any[], options?: { batchSize?: number; concurrentBatches?: boolean }): Promise<any[]>;
 
-    /** Find a single document on a specific DB index. */
+    /**
+     * Find a single document on a specific DB index.
+     * @example
+     * await User.findOne(0, { email: 'x' });
+     */
     findOne(dbIndex: number, filter: any, chain?: any): Promise<any>;
 
-    /** Find documents on a specific DB index. */
+    /**
+     * Find documents on a specific DB index.
+     * @example
+     * await User.find(1, { active: true }, { limit: 10 });
+     */
     find(dbIndex: number, filter: any, chain?: any): Promise<any>;
 
-    /** Find by id on a specific DB index. */
+    /**
+     * Find by id on a specific DB index.
+     * @example
+     * await User.findById(0, id);
+     */
     findById(dbIndex: number, filter: any, chain?: any): Promise<any>;
 
-    /** Find by id and update on a specific DB index. */
+    /**
+     * Find by id and update on a specific DB index.
+     * @example
+     * await User.findByIdAndUpdate(0, id, { name: 'New' });
+     */
     findByIdAndUpdate(dbIndex: number, id: any, update: any): Promise<any>;
 
-    /** Find by id and delete on a specific DB index. */
+    /**
+     * Find by id and delete on a specific DB index.
+     * @example
+     * await User.findByIdAndDelete(1, id);
+     */
     findByIdAndDelete(dbIndex: number, id: any, update?: any): Promise<any>;
 
-    /** Find one and update on a specific DB index. */
+    /**
+     * Find one and update on a specific DB index.
+     * @example
+     * await User.findOneAndUpdate(0, { email: 'x' }, { active: false });
+     */
     findOneAndUpdate(dbIndex: number, filter: any, update: any): Promise<any>;
 
-    /** Run aggregation on a specific DB index. */
+    /**
+     * Run aggregation on a specific DB index.
+     * @example
+     * await User.aggregate(0, [{ $group: { _id: '$country', count: { $sum: 1 } } }]);
+     */
     aggregate(dbIndex: number, filter: any): Promise<any>;
 
-    /** Watch change stream on a specific DB index. */
+    /**
+     * Watch change stream on a specific DB index.
+     * @example
+     * const stream = User.watch(0);
+     */
     watch(dbIndex: number): any;
 
-    /** Return the next model and its index for round-robin writes. */
+    /**
+     * Return the next model and its index for round-robin writes.
+     * @example
+     * const [model, idx] = User.getNextModel();
+     */
     getNextModel(): [any, number];
 
-    /** Internal runner to execute many queries concurrently and return results with timing. */
+    /**
+     * Internal runner to execute many queries concurrently and return results with timing.
+     */
     runLargeComputations(computationPairs: any[]): Promise<{ results: any[]; totalTime: number }>;
 }
-
-declare namespace Mongoplus { }
-
+declare namespace Mongoplus {
+    export { MongoModel };
+}
 export = Mongoplus;
-
