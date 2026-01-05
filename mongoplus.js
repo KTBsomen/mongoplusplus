@@ -32,15 +32,12 @@ class Mongoplus {
         return uri;
     }
 
-    connectToAll() {
+    connectToAll(connectionOptions = {}) {
         for (let i = 0; i < this.mongoURI.length; i++) {
             const uri = this.mongoURI[i].replaceAll("readonly:", '');
 
-            // Update deprecated SSL options for MongoDB Node Driver 6+
-            const connectionOptions = {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
-            };
+
+
 
             const con = mongoose.createConnection(uri, connectionOptions);
 

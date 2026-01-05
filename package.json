@@ -1,6 +1,6 @@
 {
   "name": "mongoplusplus",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "load balancing of read and write operations across multiple MongoDB servers ",
   "main": "mongoplus.js",
   "types": "index.d.ts",
